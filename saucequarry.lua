@@ -1,26 +1,21 @@
--- quarry_plus_safe_v3.lua
--- Enhanced quarry with:
--- ✅ LEFT-chest fuel & cobble pull
--- ✅ Top-layer fill with cobble
--- ✅ Deletes junk blocks instantly (stone, dirt, etc.)
--- ✅ Safe fuel handling with pause + retry
--- ✅ Safe cobble fill with pause + retry
--- ✅ Breaks out of dig loops on unbreakable blocks
--- ✅ Reduced overhead from fuel checks
+-- quarry_plus_safe_v4.lua
+-- v4 fixes:
+--   • nil-compare bug (topFillY) guarded
+--   • same feature set as v3
 
---------------------------------------------------------------------------- CONFIG
+--------------------------------------------------------------------- CONFIG ----
 local FUEL_SLOT        = 16
 local COBBLE_NAME      = "minecraft:cobblestone"
 local FUEL_CHECK_EVERY = 12
 local DIG_RETRY_MAX    = 20
 local FUEL_MARGIN_HOME = 10
 
---------------------------------------------------------------------------- PROMPT
+-------------------------------------------------------------------- PROMPT -----
 print("Enter length:") local length = tonumber(read())
 print("Enter width :" ) local width  = tonumber(read())
 print("Enter depth :" ) local depth  = tonumber(read())
 
---------------------------------------------------------------------------- JUNK
+--------------------------------------------------------------------- JUNK ------
 local junkSet = {
   ["minecraft:stone"]             = true,
   ["minecraft:cobbled_deepslate"] = true,
@@ -33,45 +28,35 @@ local junkSet = {
   ["minecraft:tuff"]              = true
 }
 
---------------------------------------------------------------------------- STATE
+--------------------------------------------------------------------- STATE -----
 local x, y, z = 0, 0, 0
-local dir = 0 -- 0=N,1=E,2=S,3=W
-local topFillY, fillDone, moves = nil, false, 0
+local dir = 0               -- 0=N,1=E,2=S,3=W
+local topFillY = nil        -- set after first descent
+local fillDone = false
+local moves    = 0
 
---------------------------------------------------------------------------- TURN
+--------------------------------------------------------------------- TURN ------
 local function tl() turtle.turnLeft();  dir = (dir - 1) % 4 end
 local function tr() turtle.turnRight(); dir = (dir + 1) % 4 end
 local function face(d) while dir ~= d do tr() end end
 local function turnAround() tr(); tr() end
 
---------------------------------------------------------------------------- CHEST
-local function suckLeft(n)
-  tl(); local ok = turtle.suck(n or 1); tr(); return ok
-end
+------------------------------------------------------------------- CHEST PULL --
+local function suckLeft(n) tl(); local ok = turtle.suck(n or 1); tr(); return ok end
 
---------------------------------------------------------------------------- FUEL
-local function manhattan()
-  return math.abs(x) + math.abs(y) + math.abs(z)
-end
-
-local function itemIsFuel(slot)
-  turtle.select(slot)
-  return turtle.refuel(0)
-end
+------------------------------------------------------------------- FUEL LOGIC --
+local function manhattan() return math.abs(x) + math.abs(y) + math.abs(z) end
+local function itemIsFuel(slot) turtle.select(slot); return turtle.refuel(0) end
 
 local function refuel(minNeeded)
   turtle.select(FUEL_SLOT)
-  local retryCount = 0
-
   while turtle.getFuelLevel() < minNeeded do
     if turtle.getItemCount(FUEL_SLOT) == 0 and x == 0 and y == 0 and z == 0 then
       suckLeft(1)
     end
     if turtle.getItemCount(FUEL_SLOT) == 0 or not itemIsFuel(FUEL_SLOT) then
-      print("[Quarry] Need at least " .. minNeeded .. " fuel.")
-      print("Insert fuel into LEFT chest and press ENTER to retry...")
-      io.read()
-      retryCount = retryCount + 1
+      print("[Quarry] Need ≥" .. minNeeded .. " fuel. Add fuel to LEFT chest & press ENTER...")
+      io.read() -- waits; no recursion
     else
       turtle.refuel(1)
     end
@@ -82,47 +67,34 @@ local function refuelMaybe()
   moves = moves + 1
   if moves % FUEL_CHECK_EVERY ~= 0 then return end
   local need = manhattan() + FUEL_MARGIN_HOME
-  if turtle.getFuelLevel() < need then
-    refuel(need + 100)
-  end
+  if turtle.getFuelLevel() < need then refuel(need + 100) end
 end
 
---------------------------------------------------------------------------- COBBLE
+------------------------------------------------------------------ COBBLE LOGIC -
+local warnedCobble = false
 local function ensureCobble()
   for s = 1, 15 do
     local d = turtle.getItemDetail(s)
-    if d and d.name == COBBLE_NAME then
-      turtle.select(s)
-      return true
-    end
+    if d and d.name == COBBLE_NAME then turtle.select(s); return true end
   end
-
   if x == 0 and y == 0 and z == 0 then
     suckLeft(4)
     for s = 1, 15 do
       local d = turtle.getItemDetail(s)
-      if d and d.name == COBBLE_NAME then
-        turtle.select(s)
-        return true
-      end
+      if d and d.name == COBBLE_NAME then turtle.select(s); return true end
     end
   end
-
-  -- Prompt user to add cobble
-  if y == topFillY then
-    print("[Quarry] Out of cobble for top-layer fill.")
-    print("Insert cobble into LEFT chest and press ENTER to retry...")
-    while true do
-      io.read()
-      if ensureCobble() then return true end
-      print("Still no cobble. Insert more and press ENTER...")
-    end
+  if y == topFillY and not warnedCobble then
+    warnedCobble = true
+    print("[Quarry] Out of cobble for top fill. Add cobble & press ENTER...")
+    io.read()
+    warnedCobble = false
+    return ensureCobble() -- retry once
   end
-
   return false
 end
 
---------------------------------------------------------------------------- JUNK
+-------------------------------------------------------------------- JUNK ------
 local function isJunk(name)
   if not name then return false end
   if name == COBBLE_NAME then return fillDone end
@@ -140,23 +112,20 @@ local function trashJunk()
   turtle.select(1)
 end
 
---------------------------------------------------------------------------- DIG
+---------------------------------------------------------------- DIG HELPERS ----
 local function digSafe(digFn, detectFn)
   local tries = 0
   while detectFn() and tries < DIG_RETRY_MAX do
-    if digFn() then return true end
+    if digFn() then break end
     tries = tries + 1
     sleep(0.05)
   end
-  return tries < DIG_RETRY_MAX
 end
 
---------------------------------------------------------------------------- MOVE
+------------------------------------------------------------------ MOVEMENT -----
 local function placeCobbleBehind()
   turnAround()
-  if not turtle.detect() and ensureCobble() then
-    turtle.place()
-  end
+  if not turtle.detect() and ensureCobble() then turtle.place() end
   turnAround()
 end
 
@@ -168,7 +137,7 @@ local function fwd()
   elseif dir == 1 then x = x + 1
   elseif dir == 2 then z = z - 1
   else                 x = x - 1 end
-  if y == topFillY then placeCobbleBehind() end
+  if topFillY and y == topFillY then placeCobbleBehind() end
   trashJunk()
 end
 
@@ -177,23 +146,22 @@ local function down()
   digSafe(turtle.digDown, turtle.detectDown)
   turtle.down()
   y = y - 1
-  if y < topFillY then fillDone = true end
+  if topFillY and y < topFillY then fillDone = true end
 end
 
---------------------------------------------------------------------------- NAV
+------------------------------------------------------------------ NAVIGATION ---
 local function goto(tx, ty, tz, td)
-  while y > ty do down() end -- only dig downward
+  -- Only dig downward (never ascend)
+  while y > ty do down() end
   if x < tx then face(1); while x < tx do fwd() end
   elseif x > tx then face(3); while x > tx do fwd() end end
-
   if z < tz then face(0); while z < tz do fwd() end
   elseif z > tz then face(2); while z > tz do fwd() end end
-
   face(td or 0)
 end
 
---------------------------------------------------------------------------- INVENTORY
-local function isFull()
+---------------------------------------------------------------- INVENTORY ------
+local function invFull()
   for i = 1, 15 do if turtle.getItemCount(i) == 0 then return false end end
   return true
 end
@@ -206,12 +174,12 @@ local function dumpChest()
   goto(ox, oy, oz, od)
 end
 
---------------------------------------------------------------------------- LAYER
+------------------------------------------------------------------ LAYER -------
 local function mineLayer()
   for row = 1, width do
     for col = 1, length - 1 do
       fwd()
-      if isFull() then dumpChest() end
+      if invFull() then dumpChest() end
     end
     if row < width then
       if row % 2 == 1 then tr(); fwd(); tr()
@@ -224,16 +192,15 @@ local function mineLayer()
   face(0)
 end
 
---------------------------------------------------------------------------- MAIN
+------------------------------------------------------------------- MAIN -------
 print("Priming supplies...")
 if turtle.getItemCount(FUEL_SLOT) == 0 then suckLeft(16) end
 suckLeft(16)
 turtle.select(1)
 
 print("Quarry starting...")
-digSafe(turtle.digDown, turtle.detectDown)
-down()
-topFillY = y
+digSafe(turtle.digDown, turtle.detectDown); down() -- first descent sets y=-1
+topFillY = y                                       -- now safe to compare
 
 for d = 1, depth do
   mineLayer()
