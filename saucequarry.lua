@@ -1,34 +1,28 @@
--- saucequarry.lua  •  Border is now placed one block down, corners stack to turtle height
+-- saucequarry.lua  •  Based on 0hUKaXKe with border + safe drop
 
--------------- CONFIG ----------------
+-- === CONFIG ===
 local MARKER_SLOT = 1
 local LOW_FUEL = 300
-local TOP_UP_FUEL = 2000
+local TOP_UP = 2000
 local JUNK = {
   ["minecraft:stone"]=true, ["minecraft:cobbled_deepslate"]=true,
-  ["minecraft:dirt"]=true,  ["minecraft:andesite"]=true,
+  ["minecraft:dirt"]=true, ["minecraft:andesite"]=true,
   ["minecraft:granite"]=true, ["minecraft:diorite"]=true,
   ["minecraft:netherrack"]=true, ["minecraft:soul_sand"]=true,
   ["minecraft:soul_soil"]=true, ["minecraft:tuff"]=true
 }
---------------------------------------
 
--- utility functions
+-- === HELPERS ===
 local function inspect(dir)
-  local ok, d = (dir == "f" and turtle.inspect) or
-                (dir == "u" and turtle.inspectUp) or
-                turtle.inspectDown
-  ok, d = ok()
-  return ok and d.name or nil
+  local ok, data = (dir=="f" and turtle.inspect or dir=="u" and turtle.inspectUp or turtle.inspectDown)()
+  return ok and data.name or nil
 end
 
-local function shouldDig(name) return not JUNK[name or ""] end
-
 local function digSmart(dir)
-  local n = inspect(dir)
-  if shouldDig(n) then
-    if dir == "f" then turtle.dig()
-    elseif dir == "d" then turtle.digDown()
+  local name = inspect(dir)
+  if not JUNK[name or ""] then
+    if dir=="f" then turtle.dig()
+    elseif dir=="d" then turtle.digDown()
     else turtle.digUp() end
   end
 end
@@ -38,10 +32,8 @@ local function ensureCobble()
   if turtle.getItemCount() == 0 then
     turtle.turnLeft()
     for i = 1, 16 do
-      if turtle.suck(64) then
-        local itm = turtle.getItemDetail()
-        if itm and itm.name:find("cobble") then break end
-      end
+      turtle.select(i)
+      if turtle.suck(64) then break end
     end
     turtle.turnRight()
   end
@@ -50,7 +42,10 @@ end
 local function pullFuel()
   turtle.turnLeft()
   for i = 1, 16 do
-    if turtle.getItemCount(i) == 0 then turtle.select(i); turtle.suck(64) end
+    if turtle.getItemCount(i) == 0 then
+      turtle.select(i)
+      turtle.suck(64)
+    end
   end
   turtle.turnRight()
 end
@@ -66,81 +61,69 @@ local function refuelTo(target)
   return turtle.getFuelLevel() >= target
 end
 
-local function topUp() if turtle.getFuelLevel() < TOP_UP_FUEL then refuelTo(TOP_UP_FUEL) end end
+local function topUpFuel()
+  if turtle.getFuelLevel() < TOP_UP then refuelTo(TOP_UP) end
+end
 
-local function dumpInv()
+local function dumpInventory()
   turtle.turnRight(); turtle.turnRight()
-  for i = 1, 16 do if i ~= MARKER_SLOT then turtle.select(i); turtle.drop() end end
+  for i = 1, 16 do
+    if i ~= MARKER_SLOT then turtle.select(i); turtle.drop() end
+  end
   turtle.turnRight(); turtle.turnRight()
 end
 
--- input
-print("Quarry width:")  ; local W = tonumber(read())
-print("Quarry length:") ; local L = tonumber(read())
-print("Current Y height (e.g. 255):")
-local startY = tonumber(read())
-local DEPTH = math.max(1, startY - 1)
-local estFuel = math.ceil(W * L * DEPTH * 2.2)
+-- === SETUP ===
+print("Quarry width:")  local W = tonumber(read())
+print("Quarry length:") local L = tonumber(read())
+print("Current Y height (e.g. 255):") local Y = tonumber(read())
+local DEPTH = math.max(1, Y - 1)
+local estimatedFuel = math.ceil(W * L * DEPTH * 2.2)
 
 print("\n=== Setup ===")
-print("• Supply chest (cobble + fuel) on LEFT of turtle")
+print("• Supply chest (fuel + cobble) on LEFT")
 print("• Output chest BEHIND turtle")
-print("Estimated total fuel ~" .. estFuel)
-print("Press Enter when ready."); io.read()
+print("Estimated fuel required: " .. estimatedFuel)
+print("Press ENTER to continue")
+io.read()
 
 ensureCobble()
 pullFuel()
-if not refuelTo(TOP_UP_FUEL) then error("No valid fuel found.") end
+if not refuelTo(TOP_UP) then error("No valid fuel found.") end
 
--- drop 1 block to begin
+-- === DROP DOWN ONE BLOCK FOR BORDER ===
+digSmart("f"); turtle.forward()
 digSmart("d")
-local dropped = turtle.down()
+assert(turtle.down(), "Failed to move down into quarry area")
 
--- border marking, 1 block lower
-print("Marking border...")
-digSmart("f")
-turtle.forward()
-digSmart("d")
-if not turtle.down() then error("Couldn't drop for border marking") end
-
-local function placeMarker()
+-- === MARK BORDER ONE BLOCK DOWN ===
+local function mark() turtle.select(MARKER_SLOT); turtle.placeDown() end
+local function markCorner()
   turtle.select(MARKER_SLOT)
   turtle.placeDown()
+  turtle.up(); turtle.placeDown(); turtle.down()
 end
 
-local function placeCornerPillar()
-  -- lower block
-  turtle.select(MARKER_SLOT)
-  turtle.placeDown()
-  -- upper block at turtle’s starting height
-  turtle.up()
-  turtle.placeDown()
-  turtle.down()
-end
-
-for edge = 1, 2 do
-  local limit = (edge == 1) and W or L
-  for s = 1, limit do
-    if s == 1 or s == limit then placeCornerPillar() else placeMarker() end
-    if s < limit then digSmart("f"); turtle.forward() end
+print("Marking border…")
+for i = 1, 2 do
+  local len = (i == 1) and W or L
+  for s = 1, len do
+    if s == 1 or s == len then markCorner() else mark() end
+    if s < len then digSmart("f"); turtle.forward() end
   end
   turtle.turnRight()
 end
-
 for _ = 1, W - 1 do turtle.forward() end
 turtle.turnRight()
 for _ = 1, L - 1 do turtle.forward() end
 turtle.turnRight()
 turtle.back()
-turtle.up()  -- return to turtle Y level
 
--- mining
-local x, z, dir = 0, 0, 0
-local function home()
+-- === MINING ===
+local x, z = 0, 0
+local function goHome()
   while z > 0 do
-    if dir % 2 == 0 then turtle.turnRight() else turtle.turnLeft() end
-    turtle.forward()
-    if dir % 2 == 0 then turtle.turnRight() else turtle.turnLeft() end
+    turtle.turnLeft(); turtle.turnLeft(); turtle.forward(); turtle.turnLeft(); turtle.turnLeft()
     z = z - 1
   end
   while x > 0 do turtle.back(); x = x - 1 end
@@ -157,26 +140,27 @@ local function mineColumn()
   if wentDown then while turtle.up() do end end
 end
 
-print("Mining...")
+print("Mining…")
 while z < L do
   while x < W do
     digSmart("f"); turtle.forward(); mineColumn(); x = x + 1
     if turtle.getItemCount(16) > 0 or turtle.getFuelLevel() < LOW_FUEL then
-      home(); dumpInv(); pullFuel(); topUp(); x, z, dir = 0, 0, 0
+      goHome(); dumpInventory(); pullFuel(); topUpFuel(); x, z = 0, 0
       print("Resuming…")
     else
-      topUp()
+      topUpFuel()
     end
   end
   if z < L - 1 then
     if z % 2 == 0 then turtle.turnRight() else turtle.turnLeft() end
     digSmart("f"); turtle.forward()
     if z % 2 == 0 then turtle.turnRight() else turtle.turnLeft() end
-    dir = (dir + 1) % 4; x = 0; z = z + 1
+    x = 0; z = z + 1
   else
     z = z + 1
   end
 end
 
-home(); dumpInv()
+goHome()
+dumpInventory()
 print("Quarry finished ✓")
