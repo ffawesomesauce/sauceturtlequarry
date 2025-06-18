@@ -1,3 +1,4 @@
+```lua
 -- quarry.lua
 -- CC:Tweaked Mining Turtle Quarry Script
 -- Features:
@@ -231,3 +232,4 @@ prompt()
 refuelIfNeeded()
 placeFloor()
 quarry()
+```
