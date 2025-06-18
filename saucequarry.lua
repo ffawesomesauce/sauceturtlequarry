@@ -1,4 +1,4 @@
--- saucequarry.lua
+-- saucequarry.lua (safe fuel handling version)
 
 -- === CONFIG ===
 local markerSlot = 1
@@ -16,31 +16,71 @@ local skipBlocks = {
 }
 
 -- === UTILS ===
-local function requireFuel(amount)
-  local fuelLevel = turtle.getFuelLevel()
-  if fuelLevel >= amount then return true end
-
-  print("Refueling from left-side chest...")
-  turtle.turnLeft()
-  for i = 1, 16 do
-    turtle.select(i)
-    turtle.suck(64)
-    turtle.refuel()
-  end
-  turtle.turnRight()
-
-  fuelLevel = turtle.getFuelLevel()
-  if fuelLevel < amount then
-    print("Insufficient fuel. Need " .. amount .. ", have " .. fuelLevel)
-    return false
-  end
-  return true
-end
-
 local function estimatedFuel(width, length)
   local area = width * length
-  local heightGuess = 64 -- usually high enough
+  local heightGuess = 64
   return math.ceil(area * heightGuess * 2.2)
+end
+
+local function dumpInventoryToBack()
+  turtle.turnRight()
+  turtle.turnRight()
+  for i = 1, 16 do
+    if i ~= markerSlot then
+      turtle.select(i)
+      turtle.drop()
+    end
+  end
+  turtle.turnRight()
+  turtle.turnRight()
+end
+
+local function pullFuelFromLeft()
+  turtle.turnLeft()
+  for i = 1, 16 do
+    if turtle.getItemCount(i) == 0 then
+      turtle.select(i)
+      turtle.suck(64)
+    end
+  end
+  turtle.turnRight()
+end
+
+local function refuelSafely(requiredFuel)
+  local currentFuel = turtle.getFuelLevel()
+  if currentFuel >= requiredFuel then return true end
+
+  print("Clearing inventory to make room for fuel...")
+  dumpInventoryToBack()
+
+  print("Pulling fuel from left chest...")
+  pullFuelFromLeft()
+
+  print("Refueling one item at a time...")
+  for i = 1, 16 do
+    turtle.select(i)
+    while turtle.getItemCount(i) > 0 and turtle.getFuelLevel() < requiredFuel do
+      turtle.refuel(1)
+    end
+    if turtle.getFuelLevel() >= requiredFuel then break end
+  end
+
+  if turtle.getFuelLevel() < requiredFuel then
+    print("Not enough fuel! Needed: " .. requiredFuel .. ", Have: " .. turtle.getFuelLevel())
+    return false
+  end
+
+  -- Return extra fuel
+  print("Returning leftover fuel to fuel chest...")
+  turtle.turnLeft()
+  for i = 1, 16 do
+    if i ~= markerSlot then
+      turtle.select(i)
+      turtle.drop()
+    end
+  end
+  turtle.turnRight()
+  return true
 end
 
 local function pauseForSetup(fuelNeed)
@@ -190,8 +230,8 @@ local fuelReq = estimatedFuel(width, length)
 
 pauseForSetup(fuelReq)
 
-if not requireFuel(fuelReq) then
-  print("Add more fuel to chest on the LEFT and rerun.")
+if not refuelSafely(fuelReq) then
+  print("Add more fuel to the LEFT chest and rerun.")
   return
 end
 
