@@ -1,10 +1,10 @@
--- quarry_plus_run4_with_autounload.lua
--- Smart turtle quarry with segmented mining and auto-unload
+-- quarry_plus_skip_top2_layers.lua
+-- Mines a vertical shaft down 2, skips top 2 layers horizontally
 
 -------------------------------------------------------------------- CONFIG
 local FUEL_SLOT        = 16
 local SEGMENTS         = 4
-local FUEL_PER_ITEM    = 80       -- assumed fuel per item (coal)
+local FUEL_PER_ITEM    = 80
 local FUEL_PER_BLOCK   = 3
 local SAFE_MARGIN      = 40
 local RETURN_MARGIN    = 15
@@ -12,7 +12,7 @@ local DIG_RETRY_MAX    = 20
 
 -------------------------------------------------------------------- STATE
 local pos = {x = 0, y = 0, z = 0}
-local dir = 0   -- 0:+X 1:+Z 2:-X 3:-Z
+local dir = 0
 
 -------------------------------------------------------------------- NAV HELPERS
 local function face(d) while dir ~= d do turtle.turnRight(); dir = (dir+1)%4 end end
@@ -47,7 +47,7 @@ local function distanceHome() return math.abs(pos.x)+math.abs(pos.y)+math.abs(po
 local function ensureFuel(minimum)
   if turtle.getFuelLevel()=="unlimited" then return end
   local startDir = dir
-  face((startDir+3)%4)                     -- look left (fuel chest)
+  face((startDir+3)%4)
   turtle.select(FUEL_SLOT)
   while turtle.getFuelLevel() < minimum do
     if not turtle.suck(1) then
@@ -60,7 +60,7 @@ local function ensureFuel(minimum)
   face(startDir); turtle.select(1)
 end
 
--------------------------------------------------------------------- INVENTORY MANAGEMENT
+-------------------------------------------------------------------- INVENTORY
 local function isInventoryFull()
   for s=1,15 do
     if turtle.getItemCount(s) == 0 then return false end
@@ -70,17 +70,17 @@ end
 
 local function dumpInventory()
   turtle.select(1)
-  turnLeft(); turnLeft()          -- face rear chest
+  turnLeft(); turnLeft()
   for s=1,15 do
     if s~=FUEL_SLOT and turtle.getItemCount(s)>0 then
       turtle.select(s); turtle.drop()
     end
   end
   turtle.select(1)
-  turnLeft(); turnLeft()          -- face forward again
+  turnLeft(); turnLeft()
 end
 
--------------------------------------------------------------------- GO HOME
+-------------------------------------------------------------------- RETURN HOME
 local function goHome()
   while pos.y<0 do up()  end
   while pos.y>0 do down() end
@@ -91,11 +91,11 @@ local function goHome()
   face(0)
 end
 
--------------------------------------------------------------------- GUARDED MOVE
+-------------------------------------------------------------------- SAFE MOVE
 local function guardedMove(stepFn)
   if turtle.getFuelLevel() ~= "unlimited" then
     if turtle.getFuelLevel() - 1 < distanceHome() + RETURN_MARGIN then
-      print("Low fuel – heading home")
+      print("Low fuel – going home")
       local save = {x=pos.x,y=pos.y,z=pos.z,dir=dir}
       goHome(); dumpInventory()
       ensureFuel(distanceHome()+SAFE_MARGIN)
@@ -104,11 +104,11 @@ local function guardedMove(stepFn)
   end
 
   if isInventoryFull() then
-    print("Inventory full – returning to unload")
+    print("Inventory full – dumping")
     local save = {x=pos.x,y=pos.y,z=pos.z,dir=dir}
     goHome(); dumpInventory()
     ensureFuel(distanceHome()+SAFE_MARGIN)
-    pos = save; dir = save.dir; print("Resuming dig")
+    pos = save; dir = save.dir; print("Back to work")
   end
 
   stepFn()
@@ -117,7 +117,7 @@ local function Gfwd()  guardedMove(fwd)  end
 local function Gdown() guardedMove(down) end
 local function Gup()   guardedMove(up)   end
 
--------------------------------------------------------------------- QUARRY ROUTINES
+-------------------------------------------------------------------- QUARRY
 local function snakeLayer(len,wid)
   for row=1,wid do
     for step=1,(row==wid and len-1 or len) do turtle.dig(); Gfwd() end
@@ -148,10 +148,22 @@ print("Enter length:") local length = tonumber(read())
 print("Enter width :" ) local width  = tonumber(read())
 print("Enter depth :" ) local depth  = tonumber(read())
 
+-- dig straight down 2 blocks at start
+print("Digging shaft to level below top 2 layers…")
+for i = 1,2 do turtle.digDown(); Gdown() end
+
+-- adjust total quarry depth
+depth = depth - 2
+if depth <= 0 then
+  print("Nothing to dig after skipping top 2 horizontal layers.")
+  return
+end
+
+-- split depth into 4 segments
 local base = math.floor(depth/SEGMENTS)
 local segDepths = {base,base,base,base + (depth % SEGMENTS)}
+local currentDepth = 2
 
-local currentDepth = 0
 for seg=1,SEGMENTS do
   local d = segDepths[seg]
   if d==0 then break end
@@ -163,4 +175,5 @@ for seg=1,SEGMENTS do
   currentDepth = currentDepth + d
   goHome(); dumpInventory()
 end
+
 print("✅  Quarry complete")
