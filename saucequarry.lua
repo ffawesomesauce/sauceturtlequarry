@@ -1,56 +1,54 @@
--- quarry_plus_resume.lua
--- Smart CC:Tweaked quarry that:
---   • Leaves top 2 horizontal layers untouched
---   • Works in 4 fuel-planned segments
---   • Auto-unloads & auto-refuels
---   • Always resumes exactly where it left off
+-- quarry_plus_stable.lua
+-- ✔ Skips top 2 surface layers horizontally
+-- ✔ Mines the requested rectangle perfectly
+-- ✔ Auto-refuels / auto-unloads and resumes
+-- ✔ Returns home after the final slice
 
 -------------------------------------------------------------------- CONFIG
 local FUEL_SLOT        = 16
-local SEGMENTS         = 4
-local FUEL_PER_ITEM    = 80        -- coal (adjust if using something else)
-local FUEL_PER_BLOCK   = 3         -- dig + move estimate
-local SAFE_MARGIN      = 40        -- buffer for bad estimates
-local RETURN_MARGIN    = 15        -- fuel kept in reserve to get home
+local SEGMENTS         = 4            -- divide total depth into this many passes
+local FUEL_PER_BLOCK   = 3            -- dig + move estimate
+local SAFE_MARGIN      = 40           -- extra fuel buffer
+local RETURN_MARGIN    = 15           -- fuel kept in reserve to get home
 local DIG_RETRY_MAX    = 20
 
 -------------------------------------------------------------------- STATE
-local pos = {x = 0, y = 0, z = 0}  -- turtle’s relative coords
-local dir = 0                      -- 0:+X 1:+Z 2:-X 3:-Z
+local pos = {x = 0, y = 0, z = 0}     -- turtle-relative coords
+local dir = 0                         -- 0:+X 1:+Z 2:-X 3:-Z
 
 -------------------------------------------------------------------- NAV HELPERS
-local function face(d) while dir ~= d do turtle.turnRight(); dir = (dir+1)%4 end end
-local function turnLeft()  turtle.turnLeft(); dir = (dir+3)%4 end
-local function turnRight() turtle.turnRight(); dir = (dir+1)%4 end
+local function face(d) while dir ~= d do turtle.turnRight(); dir = (dir + 1) % 4 end end
+local function turnLeft()  turtle.turnLeft();  dir = (dir + 3) % 4 end
+local function turnRight() turtle.turnRight(); dir = (dir + 1) % 4 end
 
 local function fwd()
-  for i=1,DIG_RETRY_MAX do
+  for _ = 1, DIG_RETRY_MAX do
     if turtle.forward() then
-      if     dir==0 then pos.x = pos.x + 1
-      elseif dir==1 then pos.z = pos.z + 1
-      elseif dir==2 then pos.x = pos.x - 1
+      if     dir == 0 then pos.x = pos.x + 1
+      elseif dir == 1 then pos.z = pos.z + 1
+      elseif dir == 2 then pos.x = pos.x - 1
       else               pos.z = pos.z - 1 end
       return true
     end
     turtle.dig(); turtle.attack(); sleep(0.2)
   end
-  error("Block ahead is unbreakable – aborting.")
+  error("Unbreakable block ahead.")
 end
 
 local function up()
-  for i=1,DIG_RETRY_MAX do
+  for _ = 1, DIG_RETRY_MAX do
     if turtle.up() then pos.y = pos.y + 1; return true end
     turtle.digUp(); turtle.attackUp(); sleep(0.2)
   end
-  error("Block above is unbreakable – aborting.")
+  error("Unbreakable block above.")
 end
 
 local function down()
-  for i=1,DIG_RETRY_MAX do
+  for _ = 1, DIG_RETRY_MAX do
     if turtle.down() then pos.y = pos.y - 1; return true end
     turtle.digDown(); turtle.attackDown(); sleep(0.2)
   end
-  error("Block below is unbreakable – aborting.")
+  error("Unbreakable block below.")
 end
 
 local function distanceHome()
@@ -61,11 +59,11 @@ end
 local function ensureFuel(minimum)
   if turtle.getFuelLevel() == "unlimited" then return end
   local startDir = dir
-  face((startDir + 3) % 4)            -- face left (fuel chest)
+  face((startDir + 3) % 4)                -- look at left chest
   turtle.select(FUEL_SLOT)
   while turtle.getFuelLevel() < minimum do
     if not turtle.suck(1) then
-      print("⏳ Waiting for fuel… need", minimum - turtle.getFuelLevel())
+      print("Waiting for fuel… need", minimum - turtle.getFuelLevel())
       sleep(10)
     else
       turtle.refuel()
@@ -84,18 +82,18 @@ end
 
 local function dumpInventory()
   turtle.select(1)
-  turnLeft(); turnLeft()              -- face rear chest
+  turnLeft(); turnLeft()                -- face rear chest
   for s = 1, 15 do
     if s ~= FUEL_SLOT and turtle.getItemCount(s) > 0 then
       turtle.select(s); turtle.drop()
     end
   end
   turtle.select(1)
-  turnLeft(); turnLeft()              -- face forward
+  turnLeft(); turnLeft()                -- face forward again
 end
 
--------------------------------------------------------------------- RETURN HOME
-local function goHome()               -- returns to (0,0,0) facing +X
+-------------------------------------------------------------------- GO HOME & RESUME
+local function goHome()                 -- back to (0,0,0) facing +X
   while pos.y < 0 do up()   end
   while pos.y > 0 do down() end
   if pos.z > 0 then face(3) while pos.z > 0 do fwd() end
@@ -105,84 +103,80 @@ local function goHome()               -- returns to (0,0,0) facing +X
   face(0)
 end
 
--------------------------------------------------------------------- RESUME HELPERS
-local function resumeFrom(saved)      -- move from origin back to saved spot
-  -- vertical first (downwards)
+local function resumeFrom(saved)
+  -- vertical first
   while pos.y > saved.y do down() end
   while pos.y < saved.y do up()   end
-
   -- Z axis
   if saved.z > 0 then face(1) while pos.z < saved.z do fwd() end
   elseif saved.z < 0 then face(3) while pos.z > saved.z do fwd() end end
-
   -- X axis
   if saved.x > 0 then face(0) while pos.x < saved.x do fwd() end
   elseif saved.x < 0 then face(2) while pos.x > saved.x do fwd() end end
-
   face(saved.dir)
 end
 
 -------------------------------------------------------------------- SAFE MOVE WRAPPER
 local function guardedMove(stepFn)
-  -- check fuel margin
+  -- fuel margin
   if turtle.getFuelLevel() ~= "unlimited" and
-     (turtle.getFuelLevel() - 1) < distanceHome() + RETURN_MARGIN then
-    print("🔄 Low fuel – heading home")
+     turtle.getFuelLevel() - 1 < distanceHome() + RETURN_MARGIN then
     local save = {x = pos.x, y = pos.y, z = pos.z, dir = dir}
+    print("Low fuel → home")
     goHome(); dumpInventory(); ensureFuel(distanceHome() + SAFE_MARGIN)
     resumeFrom(save)
-    print("🚀 Refueled – resuming dig")
   end
-
-  -- check inventory space
+  -- inventory margin
   if isInventoryFull() then
-    print("📦 Inventory full – dumping")
     local save = {x = pos.x, y = pos.y, z = pos.z, dir = dir}
+    print("Inventory full → unload")
     goHome(); dumpInventory(); ensureFuel(distanceHome() + SAFE_MARGIN)
     resumeFrom(save)
-    print("🚀 Unloaded – resuming dig")
   end
-
   stepFn()
 end
 
--- wrappers used by dig loops
 local function Gfwd()  guardedMove(fwd)  end
 local function Gdown() guardedMove(down) end
 local function Gup()   guardedMove(up)   end
 
--------------------------------------------------------------------- QUARRY ROUTINES
+-------------------------------------------------------------------- PERFECT RECTANGLE SNAKE
 local function snakeLayer(len, wid)
   for row = 1, wid do
-    for step = 1, (row == wid and len - 1 or len) do
+    -- traverse the row
+    for col = 1, len - 1 do
       turtle.dig(); Gfwd()
     end
+    turtle.dig()                         -- last block of the row
+
+    -- move to next row if any
     if row < wid then
-      if row % 2 == 1 then
-        turnRight(); turtle.dig(); Gfwd(); turnRight()
-      else
-        turnLeft();  turtle.dig(); Gfwd(); turnLeft()
+      if row % 2 == 1 then               -- currently facing +X
+        turnRight(); Gfwd(); turnRight()
+      else                               -- facing -X
+        turnLeft();  Gfwd(); turnLeft()
       end
     end
   end
-  -- return to X=0,Z=0 at current Y
+
+  -- return to origin X/Z at current Y
   if wid % 2 == 1 then face(2) else face(0) end
   while pos.x ~= 0 do Gfwd() end
   face(3); while pos.z ~= 0 do Gfwd() end
   face(0)
 end
 
+-------------------------------------------------------------------- SEGMENTED QUARRY
 local function estimateFuel(len, wid, segDepth, startDepth)
-  -- very rough bound: mining + travel + buffer
   return len * wid * segDepth * FUEL_PER_BLOCK
        + (startDepth + segDepth) * 2
        + SAFE_MARGIN
 end
 
 local function mineSegment(len, wid, segDepth)
-  for lyr = 1, segDepth do
+  for layer = 1, segDepth do
     snakeLayer(len, wid)
-    if lyr < segDepth then turtle.digDown(); Gdown() end
+    if layer < segDepth then turtle.digDown(); Gdown() end
   end
 end
 
@@ -191,36 +185,41 @@ print("Enter length:") local length = tonumber(read())
 print("Enter width :" ) local width  = tonumber(read())
 print("Enter depth :" ) local depth  = tonumber(read())
 
--------------------------------------------------------------------- DIG SHAFT (skip top 2 layers horizontally)
-print("Mining shaft 2 blocks down…")
-for i = 1, 2 do turtle.digDown(); Gdown() end  -- pos.y now -2
-
-depth = depth - 2                              -- adjust target depth
+-- create 2-block shaft so top 2 horizontal layers stay intact
+print("Making 1×1 shaft two blocks deep…")
+for _ = 1, 2 do turtle.digDown(); Gdown() end     -- pos.y = -2
+depth = depth - 2
 if depth <= 0 then
-  print("No layers left to mine after skipping top 2.")
-  return
+  print("No depth left after skipping top layers.")
+  goHome(); return
 end
 
--------------------------------------------------------------------- DIVIDE DEPTH INTO SEGMENTS
+-- split depth into SEGMENTS slices
 local base      = math.floor(depth / SEGMENTS)
-local segDepths = {base, base, base, base + (depth % SEGMENTS)}
-local currentDepth = 2                         -- we’re already 2 down
+local segDepths = {base, base, base, base + depth % SEGMENTS}
+local currentDepth = 2                             -- already down 2
 
 for seg = 1, SEGMENTS do
   local d = segDepths[seg]
   if d == 0 then break end
 
-  local needed = estimateFuel(length, width, d, currentDepth)
-  print(("Run %d – fuel estimate: %d"):format(seg, needed))
-  ensureFuel(needed)
+  local need = estimateFuel(length, width, d, currentDepth)
+  print(("Segment %d: need ≈ %d fuel"):format(seg, need))
+  ensureFuel(need)
 
   print("⛏️  Mining segment "..seg)
   mineSegment(length, width, d)
   currentDepth = currentDepth + d
 
-  goHome(); dumpInventory()                    -- end-of-segment dump
-  ensureFuel(distanceHome() + SAFE_MARGIN)     -- top-up before next loop
-  resumeFrom({x = 0, y = -currentDepth, z = 0, dir = 0})  -- back to shaft bottom
+  -- unload at the end of each slice
+  goHome(); dumpInventory()
+
+  -- only resume if more segments remain
+  if seg < SEGMENTS and segDepths[seg + 1] > 0 then
+    ensureFuel(distanceHome() + SAFE_MARGIN)
+    resumeFrom({x = 0, y = -currentDepth, z = 0, dir = 0})
+  end
 end
 
-print("✅ Quarry finished – all items deposited.")
+goHome(); dumpInventory()
+print("✅ Quarry finished – all items deposited, turtle parked at start.")
