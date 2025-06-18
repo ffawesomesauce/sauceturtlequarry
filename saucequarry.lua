@@ -1,238 +1,221 @@
 -- quarry.lua
--- CC:Tweaked Mining Turtle Quarry Script
+-- CC:Tweaked Mining Turtle Quarry Script (with outline and 3-block pattern)
 
 -- === CONFIG ===
-local JUNK_BLOCKS = {
-  minecraft = {
-    stone = true,
-    cobbled_deepslate = true,
-    dirt = true,
-    granite = true,
-    diorite = true,
-    netherrack = true,
-    soul_sand = true,
-    soul_soil = true,
-    tuff = true
-  }
+local junkBlocks = {
+  ["minecraft:stone"] = true,
+  ["minecraft:cobbled_deepslate"] = true,
+  ["minecraft:dirt"] = true,
+  ["minecraft:granite"] = true,
+  ["minecraft:diorite"] = true,
+  ["minecraft:netherrack"] = true,
+  ["minecraft:soul_sand"] = true,
+  ["minecraft:soul_soil"] = true,
+  ["minecraft:tuff"] = true
 }
 
--- === GLOBALS ===
-local width, length, startY, fuelCap = 0, 0, 0, turtle.getFuelLimit()
-local startX, startZ, facing = 0, 0, 0 -- relative movement system
-local mined = {} -- track mined blocks
-local dumpChestDir = "back"
-local supplyChestDir = "left"
+-- === STATE ===
+local width, length, startY
+local startFacing = 0 -- 0=N, 1=E, 2=S, 3=W
+local pos = { x = 0, y = 0, z = 0 }
+local dir = 0 -- 0=N, 1=E, 2=S, 3=W
 
--- === UTILITIES ===
+-- === HELPERS ===
+local function log(msg)
+  print("[Quarry] " .. msg)
+end
 
-local function log(msg) print("[Quarry] " .. msg) end
+local function turnLeft()
+  turtle.turnLeft()
+  dir = (dir - 1) % 4
+end
+
+local function turnRight()
+  turtle.turnRight()
+  dir = (dir + 1) % 4
+end
+
+local function face(targetDir)
+  while dir ~= targetDir do
+    turnRight()
+  end
+end
+
+local function moveForward()
+  while not turtle.forward() do
+    turtle.dig()
+    sleep(0.2)
+  end
+  if dir == 0 then pos.z = pos.z - 1
+  elseif dir == 1 then pos.x = pos.x + 1
+  elseif dir == 2 then pos.z = pos.z + 1
+  elseif dir == 3 then pos.x = pos.x - 1 end
+end
+
+local function moveUp()
+  while not turtle.up() do
+    turtle.digUp()
+    sleep(0.2)
+  end
+  pos.y = pos.y + 1
+end
+
+local function moveDown()
+  while not turtle.down() do
+    turtle.digDown()
+    sleep(0.2)
+  end
+  pos.y = pos.y - 1
+end
+
+local function goTo(x, y, z, faceDir)
+  while pos.y < y do moveUp() end
+  while pos.y > y do moveDown() end
+
+  local dx = x - pos.x
+  if dx ~= 0 then
+    face((dx > 0) and 1 or 3)
+    for i = 1, math.abs(dx) do moveForward() end
+  end
+
+  local dz = z - pos.z
+  if dz ~= 0 then
+    face((dz > 0) and 2 or 0)
+    for i = 1, math.abs(dz) do moveForward() end
+  end
+
+  face(faceDir)
+end
 
 local function refuelIfNeeded()
   if turtle.getFuelLevel() >= 300 then return end
   log("Refueling...")
-  turtle.select(1)
-  turtle.suck(supplyChestDir)
-  for slot = 1, 16 do
-    turtle.select(slot)
+  for i = 1, 16 do
+    turtle.select(i)
+    if turtle.getFuelLevel() >= 2000 then break end
+    turtle.suck("left")
     while turtle.refuel(1) do
-      if turtle.getFuelLevel() >= 2000 or turtle.getFuelLevel() == fuelCap then
-        log("Fuel topped up to " .. turtle.getFuelLevel())
-        return
-      end
+      if turtle.getFuelLevel() >= 2000 then break end
     end
   end
 end
 
 local function dumpInventory()
   log("Dumping inventory...")
-  for slot = 1, 16 do
-    turtle.select(slot)
-    turtle.drop(dumpChestDir)
+  for i = 1, 16 do
+    turtle.select(i)
+    turtle.drop("back")
   end
 end
 
 local function isJunk(name)
-  for prefix, list in pairs(JUNK_BLOCKS) do
-    if name:find(prefix .. ":") == 1 then
-      local suffix = name:sub(#prefix + 2)
-      if list[suffix] then return true end
-    end
-  end
-  return false
+  return junkBlocks[name] or false
 end
 
-local function checkFull()
-  for i = 1, 16 do
-    if turtle.getItemCount(i) == 0 then return false end
-  end
-  return true
-end
-
-local function returnHome()
-  log("Returning to surface...")
-  while startY < select(2, gps.locate()) do turtle.up() end
-  -- No persistent position tracking yet; assumes turtle returns to exact start tile
-  dumpInventory()
-  refuelIfNeeded()
-end
-
-local function digIfUseful()
+local function digSafe()
   local success, data = turtle.inspect()
   if not success or not isJunk(data.name) then
     turtle.dig()
   end
 end
 
-local function digDownIfUseful()
+local function digDownSafe()
   local success, data = turtle.inspectDown()
   if not success or not isJunk(data.name) then
     turtle.digDown()
   end
 end
 
-local function mineColumn()
-  for i = 1, 3 do
-    digIfUseful()
-    turtle.forward()
-    digDownIfUseful()
-    turtle.down()
+local function isInventoryFull()
+  for i = 1, 16 do
+    if turtle.getItemCount(i) == 0 then return false end
   end
-  -- climb back up
-  for i = 1, 3 do turtle.up() end
+  return true
 end
 
--- === POSITIONAL HELPERS (dummy facing) ===
+-- === MAIN TASKS ===
 
-local function face(dir)
-  while facing ~= dir do
-    turtle.turnRight()
-    facing = (facing + 1) % 4
-  end
+local function prompt()
+  io.write("Enter quarry width: ") width = tonumber(read())
+  io.write("Enter quarry length: ") length = tonumber(read())
+  io.write("Enter current Y level: ") startY = tonumber(read())
 end
-
-local function moveForward(n)
-  for i = 1, n do
-    while not turtle.forward() do
-      digIfUseful()
-      sleep(0.5)
-    end
-  end
-end
-
-local function moveUp(n)
-  for i = 1, n do
-    while not turtle.up() do
-      turtle.digUp()
-      sleep(0.5)
-    end
-  end
-end
-
-local function moveDown(n)
-  for i = 1, n do
-    while not turtle.down() do
-      turtle.digDown()
-      sleep(0.5)
-    end
-  end
-end
-
--- === SETUP ===
-
-local function setup()
-  print("Enter quarry width:")
-  width = tonumber(read())
-  print("Enter quarry length:")
-  length = tonumber(read())
-  print("Enter current Y height:")
-  startY = tonumber(read())
-
-  facing = 0 -- assume north at start
-  startX, startZ = 0, 0
-end
-
--- === OUTLINE ===
 
 local function placeCobble()
   for i = 1, 16 do
     local item = turtle.getItemDetail(i)
-    if item and item.name:find("cobblestone") then
+    if item and item.name:find("cobble") then
       turtle.select(i)
-      return turtle.placeDown()
+      if turtle.placeDown() then return true end
     end
   end
   return false
 end
 
-local function drawOutline()
+local function drawCobbleOutline()
   log("Drawing cobble outline...")
-  turtle.forward()
-  turtle.down()
+  moveForward() -- step 1 forward before outlining
+  moveDown()
+  local sx, sz = pos.x, pos.z
   for side = 1, 4 do
-    local distance = (side % 2 == 1) and width or length
-    for i = 1, distance - 1 do
+    local steps = (side % 2 == 1) and (width - 1) or (length - 1)
+    for i = 1, steps do
       placeCobble()
-      moveForward(1)
+      moveForward()
     end
-    placeCobble()
-    turtle.turnRight()
-    facing = (facing + 1) % 4
+    turnRight()
   end
-
-  -- place 2-high corner pillars
-  for i = 1, 4 do
-    turtle.select(1)
-    turtle.up()
-    placeCobble()
-    turtle.down()
-    turtle.turnLeft()
-    facing = (facing - 1) % 4
-    moveForward((i % 2 == 1) and (width - 1) or (length - 1))
-  end
-
-  -- Return to corner
-  turtle.turnLeft()
-  turtle.turnLeft()
-  moveForward(width - 1)
-  turtle.turnRight()
-  moveForward(length - 1)
-  turtle.turnLeft()
+  goTo(sx, startY - 1, sz, 0) -- go just under the first cobble tile
 end
 
--- === MINING LOOP ===
+local function mineColumn()
+  for i = 1, 3 do
+    digSafe()
+    moveForward()
+    digDownSafe()
+    moveDown()
+  end
+  for i = 1, 3 do moveUp() end
+end
 
-local function quarry()
-  log("Starting quarry...")
-  local direction = true
+local function quarryLoop()
+  log("Mining started...")
+  local home = { x = pos.x, y = pos.y, z = pos.z, d = dir }
+  local zig = true
+
   for z = 1, length do
     for x = 1, width do
       mineColumn()
-      if checkFull() or turtle.getFuelLevel() < 300 then
-        returnHome()
+      if turtle.getFuelLevel() < 300 or isInventoryFull() then
+        local resume = { x = pos.x, y = pos.y, z = pos.z, d = dir }
+        goTo(0, startY, 0, startFacing)
+        dumpInventory()
+        refuelIfNeeded()
+        goTo(resume.x, resume.y, resume.z, resume.d)
       end
-      if x < width then
-        turtle.forward()
-      end
+      if x < width then moveForward() end
     end
     if z < length then
-      if direction then
-        turtle.turnRight()
-        turtle.forward()
-        turtle.turnRight()
+      if zig then
+        turnRight()
+        moveForward()
+        turnRight()
       else
-        turtle.turnLeft()
-        turtle.forward()
-        turtle.turnLeft()
+        turnLeft()
+        moveForward()
+        turnLeft()
       end
-      direction = not direction
+      zig = not zig
     end
   end
+
+  goTo(0, startY, 0, startFacing)
+  dumpInventory()
+  log("Quarry complete.")
 end
 
--- === MAIN ===
-setup()
+-- === RUN ===
+prompt()
 refuelIfNeeded()
-drawOutline()
-quarry()
-returnHome()
-log("Quarry complete.")
+drawCobbleOutline()
+quarryLoop()
