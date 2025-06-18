@@ -1,5 +1,4 @@
--- saucequarry.lua  •  18-Jun-2025
--- one-chest supply (left), deep-dimension aware, segmented fuel
+-- saucequarry.lua  •  Bedrock-aware version with height prompt and safe fuel
 
 -------------- CONFIG ----------------
 local MARKER_SLOT   = 1              -- cobble for border / corners
@@ -32,11 +31,8 @@ local function digSmart(dir)
   end
 end
 local function ensureCobble()
-  if inspect("d")=="minecraft:bedrock" then return end -- already got slot1
-  -- see if slot1 already cobble
   turtle.select(MARKER_SLOT)
   if turtle.getItemCount()==0 then
-    -- pull from left chest
     turtle.turnLeft()
     for i=1,16 do
       if turtle.suck(64) then
@@ -57,12 +53,11 @@ local function pullFuelItems()
   turtle.turnRight()
 end
 local function tryRefuel(target)
-  -- refuel one item at a time up to target or until no valid fuel left
   for i=1,16 do
     if turtle.getFuelLevel()>=target then return true end
     turtle.select(i)
     while turtle.getItemCount()>0 and turtle.getFuelLevel()<target do
-      if turtle.refuel(1)==false then break end -- not fuel, skip stack
+      if not turtle.refuel(1) then break end
     end
   end
   return turtle.getFuelLevel()>=target
@@ -71,7 +66,6 @@ local function topUpFuel()
   if turtle.getFuelLevel()>=TOP_UP_FUEL then return end
   tryRefuel(TOP_UP_FUEL)
   if turtle.getFuelLevel()<TOP_UP_FUEL then
-    -- need more items → go home, dump, grab more
     return false
   end
   return true
@@ -86,15 +80,15 @@ end
 ---------------- SET-UP PROMPT ------------------------------------------
 print("Quarry width?");  local W = tonumber(read())
 print("Quarry length?"); local L = tonumber(read())
-print("Deep dimension (250-ish deep)? y/n");
-local deepAns = read():lower(); local DEPTH = deepAns=="y" and 250 or 64
+print("Enter current Y height (e.g. 255):")
+local startY = tonumber(read())
+local DEPTH = startY - 1; if DEPTH < 1 then DEPTH = 1 end
 local estFuel = math.ceil(W*L*DEPTH*2.2)
 
 print("\n=== Setup ===")
 print("• Put cobblestone + fuel in chest to the LEFT of turtle")
 print("• Put an empty chest directly BEHIND turtle for drops")
-print("Estimated total fuel needed ~"..estFuel)
-print("Turtle will pull fuel as it goes (20k cap handled).")
+print("Estimated fuel needed ~"..estFuel)
 print("Hit <Enter> when ready."); io.read()
 
 -------------- INITIAL PREP --------------------------------------------
@@ -124,14 +118,13 @@ for edge=1,2 do
 end
 for _=1,W-1 do turtle.forward() end; turtle.turnRight()
 for _=1,L-1 do turtle.forward() end; turtle.turnRight()
-turtle.back() -- return to start block
+turtle.back()
 -------------------------------------------------------------------------
 
 ----------------- MAIN MINING LOOP --------------------------------------
-local x,z = 0,0     -- our progress counters
-local dir = 0       -- 0 east→, 1 south↓, 2 west←, 3 north↑ relative to start
+local x,z = 0,0
+local dir = 0
 local function gotoHome()
-  -- drive back along rows already mined
   while z>0 do
     if dir%2==0 then turtle.turnRight() else turtle.turnLeft() end
     turtle.forward(); if dir%2==0 then turtle.turnRight() else turtle.turnLeft() end
@@ -150,17 +143,14 @@ end
 print("Mining...")
 while z<L do
   while x<W do
-    -- step
     digSmart("f"); turtle.forward(); mineColumn()
     x = x + 1
-    -- fuel / inv checks
     if turtle.getItemCount(16)>0 or turtle.getFuelLevel()<LOW_FUEL then
       gotoHome(); dumpInventory(); pullFuelItems(); topUpFuel(); x,z,dir = 0,0,0
       print("Resuming mining...")
     end
     if not topUpFuel() then gotoHome(); dumpInventory(); pullFuelItems(); topUpFuel() end
   end
-  -- row done, shift
   if z < L-1 then
     if (z%2==0) then turtle.turnRight() else turtle.turnLeft() end
     digSmart("f"); turtle.forward()
